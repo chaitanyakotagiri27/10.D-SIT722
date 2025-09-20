@@ -1,4 +1,5 @@
 ﻿name: CD to Production (on main)
+
 on:
   push:
     branches: [main]
@@ -9,8 +10,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+
     steps:
-      # get the repo files so ./frontend and ./backend/* exist
       - uses: actions/checkout@v4
 
       - name: Azure login
@@ -21,22 +22,26 @@ jobs:
       - name: Ensure prod RG
         run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -l australiaeast
 
-      # ACR admin creds -> docker login (so we can push)
+      # ---- ACR creds (for docker login + ACI pulls) ----
       - name: Enable ACR admin & fetch creds
+        id: acr
         run: |
           az acr update -n ${{ secrets.ACR_NAME }} --admin-enabled true
-          echo "ACR_USERNAME=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query username -o tsv)" >> $GITHUB_ENV
-          echo "ACR_PASSWORD=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query passwords[0].value -o tsv)" >> $GITHUB_ENV
+          USER=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query username -o tsv)
+          PASS=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query 'passwords[0].value' -o tsv)
+          echo "username=$USER"  >> $GITHUB_OUTPUT
+          echo "password=$PASS"  >> $GITHUB_OUTPUT
 
       - name: Docker login to ACR
-        run: echo "${{ env.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u "${{ env.ACR_USERNAME }}" --password-stdin
+        run: echo "${{ steps.acr.outputs.password }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u "${{ steps.acr.outputs.username }}" --password-stdin
 
+      # ---- build & push images tagged with commit SHA ----
       - name: Build images (tag=${GITHUB_SHA})
         run: |
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${GITHUB_SHA} ./frontend
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${GITHUB_SHA} ./backend/customer_service
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA}    ./backend/order_service
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA}  ./backend/product_service
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${GITHUB_SHA}          ./frontend
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${GITHUB_SHA}  ./backend/customer_service
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA}     ./backend/order_service
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA}   ./backend/product_service
 
       - name: Push images
         run: |
@@ -45,15 +50,18 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA}
 
-      # Deploy / upsert ACI (Linux containers)
+      # ---- deploy/replace ACI containers (Linux) ----
       - name: Upsert customer_service
         run: |
           TAG=${GITHUB_SHA}
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer \
-            --os-type Linux --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:$TAG \
-            --ports 8001 --ip-address Public --cpu 1 --memory 1
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ steps.acr.outputs.username }} \
+            --registry-password ${{ steps.acr.outputs.password }} \
+            --os-type Linux --ports 8001 --ip-address Public --cpu 1 --memory 1
 
       - name: Upsert order_service
         run: |
@@ -61,8 +69,11 @@ jobs:
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order \
-            --os-type Linux --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:$TAG \
-            --ports 8002 --ip-address Public --cpu 1 --memory 1
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ steps.acr.outputs.username }} \
+            --registry-password ${{ steps.acr.outputs.password }} \
+            --os-type Linux --ports 8002 --ip-address Public --cpu 1 --memory 1
 
       - name: Upsert product_service
         run: |
@@ -70,8 +81,11 @@ jobs:
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product \
-            --os-type Linux --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:$TAG \
-            --ports 8003 --ip-address Public --cpu 1 --memory 1
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ steps.acr.outputs.username }} \
+            --registry-password ${{ steps.acr.outputs.password }} \
+            --os-type Linux --ports 8003 --ip-address Public --cpu 1 --memory 1
 
       - name: Upsert frontend
         run: |
@@ -79,8 +93,11 @@ jobs:
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend \
-            --os-type Linux --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:$TAG \
-            --ports 80 --ip-address Public --cpu 1 --memory 1
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ steps.acr.outputs.username }} \
+            --registry-password ${{ steps.acr.outputs.password }} \
+            --os-type Linux --ports 80 --ip-address Public --cpu 1 --memory 1
 
       - name: Output prod URL
         run: |
