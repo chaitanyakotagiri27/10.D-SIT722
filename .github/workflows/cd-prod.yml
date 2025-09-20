@@ -24,13 +24,29 @@ jobs:
           echo "ACR_USERNAME=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query username -o tsv)" >> $GITHUB_ENV
           echo "ACR_PASSWORD=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query 'passwords[0].value' -o tsv)" >> $GITHUB_ENV
 
+      - name: Docker login to ACR
+        run: echo "${{ env.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} -u "${{ env.ACR_USERNAME }}" --password-stdin
+
+      - name: Build images (tag=${GITHUB_SHA})
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${GITHUB_SHA}          ./frontend
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${GITHUB_SHA} ./backend/customer_service
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA}     ./backend/order_service
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA}   ./backend/product_service
+
+      - name: Push images
+        run: |
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${GITHUB_SHA}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${GITHUB_SHA}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA}
+
       - name: Upsert customer_service
         run: |
-          TAG=${GITHUB_SHA}
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:$TAG \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${GITHUB_SHA} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
@@ -40,11 +56,10 @@ jobs:
 
       - name: Upsert order_service
         run: |
-          TAG=${GITHUB_SHA}
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:$TAG \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${GITHUB_SHA} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
@@ -54,11 +69,10 @@ jobs:
 
       - name: Upsert product_service
         run: |
-          TAG=${GITHUB_SHA}
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:$TAG \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${GITHUB_SHA} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
@@ -68,11 +82,10 @@ jobs:
 
       - name: Upsert frontend
         run: |
-          TAG=${GITHUB_SHA}
           az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:$TAG \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${GITHUB_SHA} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
