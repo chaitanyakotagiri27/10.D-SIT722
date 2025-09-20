@@ -35,7 +35,8 @@ jobs:
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
             --environment-variables PORT=8000 \
-            --ports 8000 --ip-address Public --cpu 1 --memory 1
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
 
       - name: Upsert order_service
         run: |
@@ -48,7 +49,8 @@ jobs:
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
             --environment-variables PORT=8000 \
-            --ports 8000 --ip-address Public --cpu 1 --memory 1
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
 
       - name: Upsert product_service
         run: |
@@ -61,7 +63,8 @@ jobs:
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
             --environment-variables PORT=8000 \
-            --ports 8000 --ip-address Public --cpu 1 --memory 1
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
 
       - name: Upsert frontend
         run: |
@@ -73,7 +76,8 @@ jobs:
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ env.ACR_USERNAME }} \
             --registry-password ${{ env.ACR_PASSWORD }} \
-            --ports 80 --ip-address Public --cpu 1 --memory 1
+            --ports 80 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
 
       - name: Output prod URL
         run: |
