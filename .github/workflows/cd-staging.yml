@@ -1,16 +1,21 @@
 ﻿name: CD to Staging (ephemeral)
 on:
   workflow_run:
-    workflows: ["CI (testing)"]
-    types: [completed]
+    workflows:
+      - CI (testing)
+    types:
+      - completed
 
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    permissions: { id-token: write, contents: read }
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -18,55 +23,57 @@ jobs:
         run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -l australiaeast
 
       - name: Deploy customer_service
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-customer-${TAG:0:7} \
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-customer-${TAG:0:7} \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${TAG} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --ports 8001 --ip-address Public --cpu 1 --memory 1
 
       - name: Deploy order_service
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-order-${TAG:0:7} \
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-order-${TAG:0:7} \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${TAG} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --ports 8002 --ip-address Public --cpu 1 --memory 1
 
       - name: Deploy product_service
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-product-${TAG:0:7} \
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-product-${TAG:0:7} \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${TAG} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --ports 8003 --ip-address Public --cpu 1 --memory 1
 
       - name: Deploy frontend
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-frontend-${TAG:0:7} \
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${TAG} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --ports 80 --ip-address Public --cpu 1 --memory 1
 
       - name: Smoke test
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
           sleep 60
-          IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} --query ipAddress.ip -o tsv)
-          echo "Staging URL: http://$IP"
-          curl -I --max-time 15 "http://$IP"
+          FRONT_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} --query ipAddress.ip -o tsv)
+          echo "Staging URL: http://$FRONT_IP"
+          curl -I --max-time 15 "http://$FRONT_IP"
 
   destroy:
     needs: deploy
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       - name: Tear down staging RG

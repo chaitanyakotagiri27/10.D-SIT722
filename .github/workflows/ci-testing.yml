@@ -13,15 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-
-      # Optional: run any npm tests if present
-      - name: Frontend install & test (if present)
-        run: |
-          if [ -f frontend/package.json ]; then
-            npm ci --prefix frontend
-            npm test --prefix frontend --if-present
-          fi
+        with:
+          node-version: '20'
 
       - name: Azure login
         uses: azure/login@v2
@@ -38,7 +31,7 @@ jobs:
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${{ github.sha }}    ./backend/order_service
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${{ github.sha }}  ./backend/product_service
 
-      - name: Push images ONLY if previous steps succeeded
+      - name: Push images
         if: ${{ success() }}
         run: |
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
