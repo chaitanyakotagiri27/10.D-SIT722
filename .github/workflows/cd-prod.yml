@@ -6,41 +6,78 @@ on:
 jobs:
   deploy_prod:
     runs-on: ubuntu-latest
-    permissions: { id-token: write, contents: read }
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: ACR login
-        run: az acr login --name ${{ secrets.ACR_NAME }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Ensure prod RG
         run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -l australiaeast
 
-      - name: Upsert backend (prod)
+      - name: Enable ACR admin & fetch creds
         run: |
-          TAG=${GITHUB_SHA}
-          if az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend >/dev/null 2>&1; then
-            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend
-          fi
-          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/backend:$TAG \
-            --ports 3000 --ip-address Public --cpu 1 --memory 1
+          az acr update -n ${{ secrets.ACR_NAME }} --admin-enabled true
+          echo "ACR_USERNAME=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query username -o tsv)" >> $GITHUB_ENV
+          echo "ACR_PASSWORD=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query 'passwords[0].value' -o tsv)" >> $GITHUB_ENV
 
-      - name: Upsert frontend (prod)
+      - name: Upsert customer_service
         run: |
           TAG=${GITHUB_SHA}
-          BACK_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend --query ipAddress.ip -o tsv)
-          if az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend >/dev/null 2>&1; then
+          az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer >/dev/null 2>&1 && \
+            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-customer \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Upsert order_service
+        run: |
+          TAG=${GITHUB_SHA}
+          az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order >/dev/null 2>&1 && \
+            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-order \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Upsert product_service
+        run: |
+          TAG=${GITHUB_SHA}
+          az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product >/dev/null 2>&1 && \
+            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-product \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Upsert frontend
+        run: |
+          TAG=${GITHUB_SHA}
+          az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend >/dev/null 2>&1 && \
             az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend
-          fi
           az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:$TAG \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
             --ports 80 --ip-address Public --cpu 1 --memory 1 \
-            --environment-variables BACKEND_URL=http://$BACK_IP:3000
+            --os-type Linux
 
       - name: Output prod URL
         run: |

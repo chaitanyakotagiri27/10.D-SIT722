@@ -8,41 +8,78 @@ jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    permissions: { id-token: write, contents: read }
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Ensure staging RG
         run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -l australiaeast
 
-      - name: Deploy backend (ACI)
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+      - name: Enable ACR admin & fetch creds
         run: |
-          az container create \
-            -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-backend-${TAG:0:7} \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/backend:${TAG} \
-            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
-            --ports 3000 --ip-address Public --cpu 1 --memory 1
+          az acr update -n ${{ secrets.ACR_NAME }} --admin-enabled true
+          echo "ACR_USERNAME=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query username -o tsv)" >> $GITHUB_ENV
+          echo "ACR_PASSWORD=$(az acr credential show -n ${{ secrets.ACR_NAME }} --query 'passwords[0].value' -o tsv)" >> $GITHUB_ENV
 
-      - name: Deploy frontend (ACI)
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+      - name: Deploy customer_service
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          BACK_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-backend-${TAG:0:7} --query ipAddress.ip -o tsv)
-          az container create \
-            -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
-            -n aci-frontend-${TAG:0:7} \
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-customer-${TAG:0:7} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/customer_service:${TAG} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Deploy order_service
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-order-${TAG:0:7} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/order_service:${TAG} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Deploy product_service
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-product-${TAG:0:7} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/product_service:${TAG} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
+            --environment-variables PORT=8000 \
+            --ports 8000 --ip-address Public --cpu 1 --memory 1 \
+            --os-type Linux
+
+      - name: Deploy frontend
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${TAG} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ env.ACR_USERNAME }} \
+            --registry-password ${{ env.ACR_PASSWORD }} \
             --ports 80 --ip-address Public --cpu 1 --memory 1 \
-            --environment-variables BACKEND_URL=http://$BACK_IP:3000
+            --os-type Linux
 
       - name: Smoke test
-        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        env:
+          TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
           sleep 60
           FRONT_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} --query ipAddress.ip -o tsv)
@@ -51,13 +88,12 @@ jobs:
 
   destroy:
     needs: deploy
-    if: ${{ always() }}
+    if: ${{ needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
       - name: Tear down staging RG
         run: az group delete -y -n ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }}
