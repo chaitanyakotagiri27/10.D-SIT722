@@ -21,6 +21,11 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Validate secrets
+        run: |
+          test -n "${{ secrets.ACR_NAME }}" || { echo "ACR_NAME secret missing"; exit 1; }
+          test -n "${{ secrets.ACR_LOGIN_SERVER }}" || { echo "ACR_LOGIN_SERVER secret missing"; exit 1; }
+
       - name: ACR login
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
