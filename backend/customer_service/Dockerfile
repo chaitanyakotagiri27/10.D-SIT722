@@ -1,16 +1,10 @@
 ﻿FROM python:3.11-slim
 WORKDIR /app
-
-# Try requirements in repo if present, otherwise install minimal stack
-COPY requirements.txt* /tmp/ 2>$null || true
-COPY app/requirements.txt* /tmp/ 2>$null || true
-RUN set -eux; \
-    pip install --no-cache-dir --upgrade pip; \
-    if [ -f /tmp/requirements.txt ]; then pip install --no-cache-dir -r /tmp/requirements.txt; \
-    elif [ -f /tmp/app/requirements.txt ]; then pip install --no-cache-dir -r /tmp/app/requirements.txt; \
-    else pip install --no-cache-dir fastapi "uvicorn[standard]" pydantic sqlalchemy; fi
-
+# copy the service code
 COPY . /app
+# minimal deps to run FastAPI services
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir fastapi "uvicorn[standard]" pydantic sqlalchemy
 ENV PORT=8000
 EXPOSE 8000
-CMD ["bash","-lc","uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
