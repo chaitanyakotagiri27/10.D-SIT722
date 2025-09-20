@@ -1,0 +1,57 @@
+﻿name: CI (testing)
+on:
+  push:
+    branches: [testing]
+
+jobs:
+  build_test_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      # Frontend tests (if package.json exists)
+      - name: Frontend install & test (if present)
+        run: |
+          if [ -f frontend/package.json ]; then
+            npm ci --prefix frontend
+            npm test --prefix frontend --if-present
+          else
+            echo "No frontend/package.json; skipping"
+          fi
+
+      # Backend tests (if package.json exists)
+      - name: Backend install & test (if present)
+        run: |
+          if [ -f backend/package.json ]; then
+            npm ci --prefix backend
+            npm test --prefix backend --if-present
+          else
+            echo "No backend/package.json; skipping"
+          fi
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build images
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} ./frontend
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/backend:${{ github.sha }}  ./backend
+
+      - name: Push images ONLY if tests passed
+        if: ${{ success() }}
+        run: |
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/backend:${{ github.sha }}

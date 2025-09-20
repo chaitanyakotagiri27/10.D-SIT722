@@ -1,0 +1,63 @@
+﻿name: CD to Staging (ephemeral)
+on:
+  workflow_run:
+    workflows: ["CI (testing)"]
+    types: [completed]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure staging RG
+        run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -l australiaeast
+
+      - name: Deploy backend (ACI)
+        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        run: |
+          az container create \
+            -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
+            -n aci-backend-${TAG:0:7} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/backend:${TAG} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --ports 3000 --ip-address Public --cpu 1 --memory 1
+
+      - name: Deploy frontend (ACI)
+        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        run: |
+          BACK_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-backend-${TAG:0:7} --query ipAddress.ip -o tsv)
+          az container create \
+            -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} \
+            -n aci-frontend-${TAG:0:7} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${TAG} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --ports 80 --ip-address Public --cpu 1 --memory 1 \
+            --environment-variables BACKEND_URL=http://$BACK_IP:3000
+
+      - name: Smoke test
+        env: { TAG: ${{ github.event.workflow_run.head_sha }} }
+        run: |
+          sleep 60
+          FRONT_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }} -n aci-frontend-${TAG:0:7} --query ipAddress.ip -o tsv)
+          echo "Staging URL: http://$FRONT_IP"
+          curl -I --max-time 15 "http://$FRONT_IP"
+
+  destroy:
+    needs: deploy
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Tear down staging RG
+        run: az group delete -y -n ${{ secrets.AZURE_RESOURCE_GROUP_STAGING }}

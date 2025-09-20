@@ -1,0 +1,48 @@
+﻿name: CD to Production (on main)
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy_prod:
+    runs-on: ubuntu-latest
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Ensure prod RG
+        run: az group create -n ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -l australiaeast
+
+      - name: Upsert backend (prod)
+        run: |
+          TAG=${GITHUB_SHA}
+          if az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend >/dev/null 2>&1; then
+            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend
+          fi
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/backend:$TAG \
+            --ports 3000 --ip-address Public --cpu 1 --memory 1
+
+      - name: Upsert frontend (prod)
+        run: |
+          TAG=${GITHUB_SHA}
+          BACK_IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-backend --query ipAddress.ip -o tsv)
+          if az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend >/dev/null 2>&1; then
+            az container delete -y -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend
+          fi
+          az container create -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:$TAG \
+            --ports 80 --ip-address Public --cpu 1 --memory 1 \
+            --environment-variables BACKEND_URL=http://$BACK_IP:3000
+
+      - name: Output prod URL
+        run: |
+          IP=$(az container show -g ${{ secrets.AZURE_RESOURCE_GROUP_PROD }} -n prod-frontend --query ipAddress.ip -o tsv)
+          echo "Prod URL: http://$IP"
